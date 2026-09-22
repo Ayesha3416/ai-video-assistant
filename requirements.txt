@@ -1,0 +1,49 @@
+# AI Video Assistant -- runtime dependencies
+#
+# Ranges rather than exact pins: your working venv is the authority on exact
+# versions. Once the app runs green, freeze it:
+#     pip freeze > requirements.lock.txt
+# and build the Docker image from the lock file (Step 15).
+#
+# SYSTEM DEPENDENCY: ffmpeg must be on PATH. Both utils/audio_processor.py
+# (via pydub) and core/frame_extractor.py (direct subprocess call) require it.
+#     macOS:  brew install ffmpeg
+#     Debian: apt-get install -y ffmpeg
+#     Windows: winget install Gyan.FFmpeg
+
+# ---- Web UI ----
+streamlit>=1.40,<2.0
+
+# ---- Configuration ----
+python-dotenv>=1.0,<2.0
+
+# ---- LLM orchestration ----
+langchain-core>=0.3,<0.4
+langchain-groq>=0.2,<0.4
+langchain-text-splitters>=0.3,<0.4
+
+# ---- Vector store + embeddings ----
+langchain-chroma>=0.1.4,<0.3
+langchain-huggingface>=0.1,<0.4
+chromadb>=0.5,<2.0
+sentence-transformers>=3.0,<6.0
+
+# ---- Transcription ----
+openai-whisper>=20231117
+pydub>=0.25,<0.26
+requests>=2.31,<3.0
+
+# ---- Media ----
+yt-dlp>=2024.8.6
+
+# ---- Documents ----
+fpdf2>=2.7,<3.0
+
+# ---- Data / charts ----
+pandas>=2.0,<3.0
+plotly>=5.20,<7.0
+
+# ---- Security (Step 3) ----
+bcrypt>=4.1,<5.0
+itsdangerous>=2.1,<3.0
+streamlit-cookies-controller>=0.0.4
