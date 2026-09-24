@@ -1,29 +1,60 @@
-import json
-import os
+"""Chat sessions, now backed by the SQLite DB (db/models.py) instead of
+data/chat_sessions.json. Public API unchanged on purpose -- save_session(),
+upsert_session(), get_sessions(), delete_session() keep the exact same
+signatures/return shapes (get_sessions() still returns plain dicts with the
+same keys: id, title, timestamp, chat_history, result) -- so ui/navbar.py,
+ui/sidebar.py, ui/dashboard.py needed no changes for this switch.
+"""
 import uuid
 from datetime import datetime
 
-from config.paths import CHAT_SESSIONS_JSON, DATA_DIR
+from db.session import get_db
+from db.models import User, ChatSession
 
-SESSIONS_FILE = str(CHAT_SESSIONS_JSON)
-
-
-def _ensure_file():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if not os.path.exists(SESSIONS_FILE):
-        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
-            json.dump({}, f)
+MAX_SESSIONS_PER_USER = 30
 
 
-def _load() -> dict:
-    _ensure_file()
-    with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+def _serializable_result(result: dict | None) -> dict | None:
+    # rag_chain can't be saved to the DB (JSON column) -- keep only
+    # serializable fields, same as the old JSON version did.
+    if not result:
+        return None
+    return {
+        "title": result.get("title"),
+        "transcript": result.get("transcript"),
+        "summary": result.get("summary"),
+        "action_items": result.get("action_items"),
+        "key_decisions": result.get("key_decisions"),
+        "open_questions": result.get("open_questions"),
+        "category": result.get("category"),
+        "segments": result.get("segments"),
+        "source": result.get("source"),
+    }
 
 
-def _save(data: dict):
-    with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+def _session_to_dict(row: ChatSession) -> dict:
+    return {
+        "id": row.id,
+        "title": row.title,
+        "timestamp": row.created_at.strftime("%Y-%m-%d %H:%M"),
+        "chat_history": row.chat_history,
+        "result": row.result,
+    }
+
+
+def _trim_to_cap(db, user_id: int):
+    all_ids = [
+        row.id for row in
+        db.query(ChatSession.id)
+        .filter_by(user_id=user_id)
+        .order_by(ChatSession.created_at.desc())
+        .all()
+    ]
+    stale_ids = all_ids[MAX_SESSIONS_PER_USER:]
+    if stale_ids:
+        db.query(ChatSession).filter(ChatSession.id.in_(stale_ids)).delete(
+            synchronize_session=False
+        )
 
 
 def save_session(user_email: str, chat_history: list, result: dict | None):
@@ -31,40 +62,24 @@ def save_session(user_email: str, chat_history: list, result: dict | None):
     if not chat_history:
         return  # nothing worth saving
 
-    data = _load()
-    data.setdefault(user_email, [])
+    with get_db() as db:
+        user = db.query(User).filter_by(email=user_email).first()
+        if not user:
+            return
 
-    if result:
-        title = result.get("title", "Untitled chat")
-    else:
-        title = chat_history[0]["content"][:50]
+        title = result.get("title", "Untitled chat") if result else chat_history[0]["content"][:50]
 
-    # rag_chain can't be saved to JSON — keep only serializable fields
-    serializable_result = None
-    if result:
-        serializable_result = {
-            "title": result.get("title"),
-            "transcript": result.get("transcript"),
-            "summary": result.get("summary"),
-            "action_items": result.get("action_items"),
-            "key_decisions": result.get("key_decisions"),
-            "open_questions": result.get("open_questions"),
-            "category": result.get("category"),
-            "segments": result.get("segments"),
-            "source": result.get("source"),
-        }
-
-    session = {
-        "id": str(uuid.uuid4()),
-        "title": title,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "chat_history": chat_history,
-        "result": serializable_result,
-    }
-
-    data[user_email].insert(0, session)
-    data[user_email] = data[user_email][:30]
-    _save(data)
+        db.add(ChatSession(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            title=title,
+            created_at=datetime.now(),
+            chat_history=chat_history,
+            result=_serializable_result(result),
+        ))
+        db.flush()
+        _trim_to_cap(db, user.id)
+        db.commit()
 
 
 def upsert_session(user_email: str, session_id: str, chat_history: list, result: dict | None):
@@ -77,55 +92,52 @@ def upsert_session(user_email: str, session_id: str, chat_history: list, result:
     if not chat_history:
         return
 
-    data = _load()
-    data.setdefault(user_email, [])
+    with get_db() as db:
+        user = db.query(User).filter_by(email=user_email).first()
+        if not user:
+            return
 
-    if result:
-        title = result.get("title", "Untitled chat")
-    else:
-        title = chat_history[0]["content"][:50]
+        title = result.get("title", "Untitled chat") if result else chat_history[0]["content"][:50]
 
-    serializable_result = None
-    if result:
-        serializable_result = {
-            "title": result.get("title"),
-            "transcript": result.get("transcript"),
-            "summary": result.get("summary"),
-            "action_items": result.get("action_items"),
-            "key_decisions": result.get("key_decisions"),
-            "open_questions": result.get("open_questions"),
-            "category": result.get("category"),
-            "segments": result.get("segments"),
-            "source": result.get("source"),
-        }
+        row = db.query(ChatSession).filter_by(id=session_id, user_id=user.id).first()
+        if row:
+            row.title = title
+            row.created_at = datetime.now()  # bumps it back to top of Recent, same as before
+            row.chat_history = chat_history
+            row.result = _serializable_result(result)
+        else:
+            db.add(ChatSession(
+                id=session_id,
+                user_id=user.id,
+                title=title,
+                created_at=datetime.now(),
+                chat_history=chat_history,
+                result=_serializable_result(result),
+            ))
 
-    sessions = data[user_email]
-    existing_idx = next(
-        (i for i, s in enumerate(sessions) if s.get("id") == session_id), None
-    )
-
-    session = {
-        "id": session_id,
-        "title": title,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "chat_history": chat_history,
-        "result": serializable_result,
-    }
-
-    if existing_idx is not None:
-        sessions.pop(existing_idx)
-    sessions.insert(0, session)
-
-    data[user_email] = sessions[:30]
-    _save(data)
+        db.flush()
+        _trim_to_cap(db, user.id)
+        db.commit()
 
 
 def get_sessions(user_email: str) -> list:
-    data = _load()
-    return data.get(user_email, [])
+    with get_db() as db:
+        user = db.query(User).filter_by(email=user_email).first()
+        if not user:
+            return []
+        rows = (
+            db.query(ChatSession)
+            .filter_by(user_id=user.id)
+            .order_by(ChatSession.created_at.desc())
+            .all()
+        )
+        return [_session_to_dict(r) for r in rows]
+
 
 def delete_session(user_email: str, session_id: str):
-    data = _load()
-    sessions = data.get(user_email, [])
-    data[user_email] = [s for s in sessions if s.get("id") != session_id]
-    _save(data)
+    with get_db() as db:
+        user = db.query(User).filter_by(email=user_email).first()
+        if not user:
+            return
+        db.query(ChatSession).filter_by(id=session_id, user_id=user.id).delete()
+        db.commit()

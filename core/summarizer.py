@@ -32,6 +32,19 @@ def summarize(transcript: str) -> str:
         if i > 0:
             time.sleep(0.8)  # light pacing between chunk calls to avoid tripping Groq's rate limit
         chunk_summaries.append(invoke_with_retry(map_chain, {"text": chunk}))
+
+    # Bug fix: this used to always make a second "combine" LLM call even
+    # when there was only ONE chunk (the common case -- most videos'
+    # transcripts fit in a single ~3000-char chunk), doubling API calls,
+    # latency, and rate-limit usage for no benefit, since combining a single
+    # summary with itself changes nothing about the content. core/extractor.py
+    # right next to this file already has exactly this short-circuit for its
+    # own map-reduce calls; this brings summarize() in line with it. Only
+    # when a transcript is long enough to actually split into multiple
+    # chunks does the extra combine step still run.
+    if len(chunk_summaries) == 1:
+        return chunk_summaries[0]
+
     combined = "\n\n".join(chunk_summaries)
 
     combined_prompt = ChatPromptTemplate.from_messages([

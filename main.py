@@ -1,3 +1,5 @@
+import os
+
 from config import bootstrap, get_logger
 
 bootstrap()
@@ -30,6 +32,16 @@ def run_pipeline(source: str, language: str = "english", on_progress=None) -> di
     transcript = transcript_data["text"]
     segments = transcript_data["segments"]  # [] for hinglish — no per-sentence timing available
     report("transcribing", f"Transcription complete ({len(transcript)} characters).")
+
+    # Chunks aren't needed past this point -- delete them now rather than
+    # letting downloades/ grow by one audio chunk set per analysis forever.
+    # (The full pre-chunked audio file is already removed by chunk_audio()
+    # in utils/audio_processor.py as soon as chunking succeeds.)
+    for chunk_path in chunks:
+        try:
+            os.remove(chunk_path)
+        except OSError as e:
+            log.warning("Could not remove audio chunk %s: %s", chunk_path, e)
 
     report("summarizing", "Generating title...")
     title = generate_title(transcript)

@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 import uuid
 
 import yt_dlp
@@ -13,6 +14,57 @@ log = get_logger(__name__)
 # Directory creation itself is handled once by config.ensure_runtime_dirs()
 # at bootstrap, same as every other runtime directory.
 FRAMES_DIR = str(_FRAMES_DIR)
+
+# Grace period before an unreferenced frame is eligible for deletion. Frame
+# paths get saved into a chat session's DB row (via upsert_session) in the
+# same request that creates them, so this only needs to cover that short
+# window -- not how long the frame itself should live.
+_ORPHAN_GRACE_SECONDS = 30 * 60
+
+
+def _cleanup_orphaned_frames():
+    """Delete frame files no saved chat session still references.
+
+    Frame images are shown again whenever an old chat is reopened (the path
+    is stored in that session's chat_history in the DB), so unlike
+    core/vector_store.py's cleanup, this can't just delete anything past an
+    age cutoff -- that would silently break images in old chats. Instead:
+    collect every image_path referenced by any session in the DB, and only
+    remove files NOT in that set (and only once they're old enough that they
+    can't just be mid-creation for a chat that hasn't been saved yet).
+    """
+    if not os.path.exists(FRAMES_DIR):
+        return
+
+    try:
+        from db.session import get_db
+        from db.models import ChatSession
+
+        referenced_paths = set()
+        with get_db() as db:
+            for (chat_history,) in db.query(ChatSession.chat_history).all():
+                for msg in (chat_history or []):
+                    path = isinstance(msg, dict) and msg.get("image_path")
+                    if path:
+                        referenced_paths.add(path)
+    except Exception as e:
+        # DB not reachable for some reason -- skip cleanup this time rather
+        # than risk deleting something we can't confirm is unreferenced.
+        log.warning("Could not check referenced frames, skipping cleanup: %s", e)
+        return
+
+    now = time.time()
+    for name in os.listdir(FRAMES_DIR):
+        path = os.path.join(FRAMES_DIR, name)
+        if path in referenced_paths:
+            continue
+        try:
+            age = now - os.path.getmtime(path)
+            if age > _ORPHAN_GRACE_SECONDS:
+                os.remove(path)
+                log.info("Removed orphaned frame %s (age %.0fm)", path, age / 60)
+        except Exception as e:
+            log.warning("Could not check/remove frame %s: %s", path, e)
 
 
 def _is_url(source: str) -> bool:
@@ -81,6 +133,8 @@ def extract_frame(source: str, timestamp_seconds: float) -> str:
     """
     if timestamp_seconds < 0:
         raise ValueError("Timestamp can't be negative.")
+
+    _cleanup_orphaned_frames()
 
     stream_url = _resolve_stream_url(source)
 

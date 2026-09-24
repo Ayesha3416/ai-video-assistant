@@ -107,6 +107,16 @@ def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
 
     log.info("Audio ready — %d valid chunk(s) created.", len(chunks))
 
+    # The full downloaded/converted audio isn't needed once it's been split
+    # into chunks -- only the chunks get transcribed. Deleting it here (not
+    # on a timer) avoids downloades/ growing by one full audio file per
+    # analysis forever. Chunk files themselves are deleted by the caller
+    # (main.py) right after transcription uses them.
+    try:
+        os.remove(wav_path)
+    except OSError as e:
+        log.warning("Could not remove source audio %s after chunking: %s", wav_path, e)
+
     return chunks
 
 def process_input(source: str, on_progress=None) -> list:

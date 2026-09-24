@@ -1,4 +1,5 @@
 import streamlit as st
+import html as _html
 
 
 from auth.auth_manager import get_display_name
@@ -28,8 +29,11 @@ def render_navbar(show_features: bool = True):
                 display_name = get_display_name(st.session_state.user_email)
                 c1, c2, c3 = st.columns([1.5, 1.3, 1.2])
                 with c1:
+                    # display_name has no character restrictions at signup,
+                    # so a stray < or > would otherwise render as raw HTML
+                    # here (unsafe_allow_html=True).
                     st.markdown(
-                        f"<div class='navbar-user'>👤 {display_name}</div>",
+                        f"<div class='navbar-user'>👤 {_html.escape(display_name)}</div>",
                         unsafe_allow_html=True,
                     )
                 with c2:

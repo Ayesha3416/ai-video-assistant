@@ -8,6 +8,15 @@ from config import bootstrap
 
 bootstrap()
 
+# Step 7b: create DB tables if they don't exist yet. init_db() is safe to
+# call every time (CREATE TABLE IF NOT EXISTS under the hood) -- this just
+# means a fresh install works even if scripts/migrate_json_to_sqlite.py was
+# never run (nothing to migrate, but auth/history/chat_sessions still need
+# the tables to exist).
+from db.session import init_db
+
+init_db()
+
 from ui.styles import load_css
 from ui.home_page import render_home_page
 from ui.auth_pages import render_login_page, render_signup_page

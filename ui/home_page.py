@@ -5,16 +5,27 @@ from ui.navbar import render_navbar
 def render_home_page():
     render_navbar()
 
-    st.markdown("""
-    <div class="hero-wrap">
-        <div class="hero-badge">● REC — AI Video Intelligence</div>
-        <div class="hero-title">Every video has a<br><span>moment worth finding.</span></div>
-        <div class="hero-sub">
-            Paste a YouTube link or a local file into the chat. Get a transcript, a summary,
-            action items — and an assistant that can tell you exactly when something was said.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Bug fix (same as ui/dashboard.py Step 13): every block on this page
+    # used a multi-line, indented triple-quoted f-string for its HTML.
+    # Streamlit's markdown renderer treats any line indented 4+ spaces as a
+    # literal code block, and a triple-quoted string literally includes that
+    # Python-source indentation as part of the string content -- so this
+    # entire landing page was very likely rendering as visible raw HTML/CSS
+    # text instead of the actual hero section, feature cards, etc. Every
+    # block below is now a single flat concatenated string with no embedded
+    # newlines/indentation, matching how the rest of the app already safely
+    # does this.
+    st.markdown(
+        '<div class="hero-wrap">'
+        '<div class="hero-badge">● REC — AI Video Intelligence</div>'
+        '<div class="hero-title">Every video has a<br><span>moment worth finding.</span></div>'
+        '<div class="hero-sub">'
+        'Paste a YouTube link or a local file into the chat. Get a transcript, a summary, '
+        'action items — and an assistant that can tell you exactly when something was said.'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     logged_in = bool(st.session_state.get("user_email"))
     hero_btn_label = "Go to Dashboard" if logged_in else "Analyze your first video"
@@ -24,113 +35,123 @@ def render_home_page():
             st.session_state.page = "dashboard" if logged_in else "signup"
             st.rerun()
 
-    st.markdown("""
-    <div class="scrubber-wrap">
-        <div class="scrubber-track"><div class="scrubber-fill"></div></div>
-        <div class="scrubber-marks">
-            <div class="scrubber-mark">
-                <div class="scrubber-dot"></div>
-                <div class="scrubber-time">0:14</div>
-                <div class="scrubber-label">Intro</div>
-            </div>
-            <div class="scrubber-mark">
-                <div class="scrubber-dot"></div>
-                <div class="scrubber-time">2:10</div>
-                <div class="scrubber-label">Key decision</div>
-            </div>
-            <div class="scrubber-mark">
-                <div class="scrubber-dot"></div>
-                <div class="scrubber-time">14:02</div>
-                <div class="scrubber-label">Action item</div>
-            </div>
-            <div class="scrubber-mark">
-                <div class="scrubber-dot"></div>
-                <div class="scrubber-time">28:47</div>
-                <div class="scrubber-label">Open question</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="scrubber-wrap">'
+        '<div class="scrubber-track"><div class="scrubber-fill"></div></div>'
+        '<div class="scrubber-marks">'
+        '<div class="scrubber-mark">'
+        '<div class="scrubber-dot"></div>'
+        '<div class="scrubber-time">0:14</div>'
+        '<div class="scrubber-label">Intro</div>'
+        '</div>'
+        '<div class="scrubber-mark">'
+        '<div class="scrubber-dot"></div>'
+        '<div class="scrubber-time">2:10</div>'
+        '<div class="scrubber-label">Key decision</div>'
+        '</div>'
+        '<div class="scrubber-mark">'
+        '<div class="scrubber-dot"></div>'
+        '<div class="scrubber-time">14:02</div>'
+        '<div class="scrubber-label">Action item</div>'
+        '</div>'
+        '<div class="scrubber-mark">'
+        '<div class="scrubber-dot"></div>'
+        '<div class="scrubber-time">28:47</div>'
+        '<div class="scrubber-label">Open question</div>'
+        '</div>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("""
-    <div class="highlight-row">
-        <div class="highlight-chip">🔒 Runs locally — your files stay private</div>
-        <div class="highlight-chip">🎙️ Transcribed by OpenAI Whisper</div>
-        <div class="highlight-chip">🧠 Summarized by Mistral AI</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="highlight-row">'
+        '<div class="highlight-chip">🔒 Runs locally — your files stay private</div>'
+        '<div class="highlight-chip">🎙️ Transcribed by OpenAI Whisper</div>'
+        '<div class="highlight-chip">🧠 Summarized by Mistral AI</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown('<div id="what-it-does"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title" style="text-align:center;">What it does</div>', unsafe_allow_html=True)
 
     c1, c2, c3, c4 = st.columns(4, gap="medium")
     with c1:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="icon">📝</div>
-            <h4>Transcribe</h4>
-            <p>Accurate speech-to-text powered by OpenAI Whisper, running locally on your machine.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="feature-card">'
+            '<div class="icon">📝</div>'
+            '<h4>Transcribe</h4>'
+            '<p>Accurate speech-to-text powered by OpenAI Whisper, running locally on your machine.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     with c2:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="icon">📋</div>
-            <h4>Summarize</h4>
-            <p>Get a title, summary, action items, and key decisions — generated by Mistral AI.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="feature-card">'
+            '<div class="icon">📋</div>'
+            '<h4>Summarize</h4>'
+            '<p>Get a title, summary, action items, and key decisions — generated by Mistral AI.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     with c3:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="icon">💬</div>
-            <h4>Ask, and get a timestamp</h4>
-            <p>Ask when something was said and get a real answer, cited to the exact moment in the video.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="feature-card">'
+            '<div class="icon">💬</div>'
+            '<h4>Ask, and get a timestamp</h4>'
+            '<p>Ask when something was said and get a real answer, cited to the exact moment in the video.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     with c4:
-        st.markdown("""
-        <div class="feature-card">
-            <div class="icon">📊</div>
-            <h4>Track history</h4>
-            <p>Every analysis is saved, so you can revisit summaries and stats anytime.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="feature-card">'
+            '<div class="icon">📊</div>'
+            '<h4>Track history</h4>'
+            '<p>Every analysis is saved, so you can revisit summaries and stats anytime.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown('<div class="section-title" style="text-align:center;">How it works</div>', unsafe_allow_html=True)
 
     s1, s2, s3 = st.columns(3, gap="medium")
     with s1:
-        st.markdown("""
-        <div class="step-card">
-            <div class="step-number">1</div>
-            <h4>Paste a link</h4>
-            <p>Drop a YouTube URL or a local file path straight into the chat box.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="step-card">'
+            '<div class="step-number">1</div>'
+            '<h4>Paste a link</h4>'
+            '<p>Drop a YouTube URL or a local file path straight into the chat box.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     with s2:
-        st.markdown("""
-        <div class="step-card">
-            <div class="step-number">2</div>
-            <h4>AI does the work</h4>
-            <p>We transcribe, summarize, and extract action items and decisions automatically.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="step-card">'
+            '<div class="step-number">2</div>'
+            '<h4>AI does the work</h4>'
+            '<p>We transcribe, summarize, and extract action items and decisions automatically.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
     with s3:
-        st.markdown("""
-        <div class="step-card">
-            <div class="step-number">3</div>
-            <h4>Chat & explore</h4>
-            <p>Ask follow-up questions and get answers grounded in the actual transcript.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            '<div class="step-card">'
+            '<div class="step-number">3</div>'
+            '<h4>Chat & explore</h4>'
+            '<p>Ask follow-up questions and get answers grounded in the actual transcript.</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
-    st.markdown("""
-    <div class="cta-band">
-        <h2>Stop re-watching. Start asking.</h2>
-        <p>Create a free account and analyze your first video in minutes.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="cta-band">'
+        '<h2>Stop re-watching. Start asking.</h2>'
+        '<p>Create a free account and analyze your first video in minutes.</p>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     cta_col = st.columns([1, 1.2, 1])[1]
     with cta_col:
@@ -139,8 +160,9 @@ def render_home_page():
             st.session_state.page = "dashboard" if logged_in else "signup"
             st.rerun()
 
-    st.markdown("""
-    <div class="footer">
-        Built with Whisper, LangChain, Mistral AI, ChromaDB & Streamlit.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="footer">'
+        'Built with Whisper, LangChain, Mistral AI, ChromaDB & Streamlit.'
+        '</div>',
+        unsafe_allow_html=True,
+    )

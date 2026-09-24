@@ -152,10 +152,24 @@ _NOTES_INTENT_PHRASES = (
     "study notes",
 )
 
+# Bug fix: the exact-phrase check above missed anything with a word in
+# between the verb and "notes" -- e.g. "generate CLEAR notes on the topics
+# covered" doesn't contain the literal substring "generate notes", so it fell
+# through to a normal chat answer instead of the structured notes feature
+# (no card, no download button, and the LLM answering as free text instead
+# of working properly off the full transcript). This catches that: the word
+# "notes" anywhere in the message, plus one of these common trigger verbs
+# anywhere in the message (not necessarily adjacent to "notes").
+_NOTES_TRIGGER_VERBS = (
+    "generate", "make", "take", "give", "write", "create", "prepare", "need",
+)
+
 
 def _is_notes_request(message: str) -> bool:
     lower = message.lower()
-    return any(phrase in lower for phrase in _NOTES_INTENT_PHRASES)
+    if any(phrase in lower for phrase in _NOTES_INTENT_PHRASES):
+        return True
+    return "notes" in lower and any(verb in lower for verb in _NOTES_TRIGGER_VERBS)
 
 
 def _generate_and_append_quiz(num_questions: int):
@@ -481,7 +495,18 @@ def render_dashboard():
                                 st.markdown(f"- {bullet}")
                             st.markdown("<div style='height:0.4rem;'></div>", unsafe_allow_html=True)
 
-                        pdf_bytes = build_notes_pdf(notes, video_title)
+                        # Cache the rendered PDF per notes_id instead of
+                        # rebuilding it from scratch on every Streamlit
+                        # rerun (which fires on almost any click anywhere in
+                        # the app, not just this button) -- was wasted CPU
+                        # work that got worse the more notes existed in one
+                        # chat. Cached in memory only (session_state), not
+                        # persisted to the DB, so it doesn't bloat storage.
+                        pdf_cache = st.session_state.setdefault("notes_pdf_cache", {})
+                        notes_id = msg["notes_id"]
+                        if notes_id not in pdf_cache:
+                            pdf_cache[notes_id] = build_notes_pdf(notes, video_title)
+                        pdf_bytes = pdf_cache[notes_id]
                         clean_filename = re.sub(
                             r'[^a-zA-Z0-9_-]', '_',
                             notes.get("title") or video_title or "video_notes"
@@ -749,6 +774,7 @@ def render_dashboard():
                         answer = ask_question(
                             st.session_state.result["rag_chain"],
                             message,
+                            chat_history=st.session_state.chat_history,
                         )
                 except Exception as e:
                     answer = (
@@ -777,16 +803,23 @@ def render_dashboard():
 
         if not st.session_state.result:
 
+            # Bug fix: this used to be a multi-line, deeply-indented triple-
+            # quoted f-string. Streamlit's markdown renderer treats lines
+            # indented 4+ spaces as a literal code block, and a triple-quoted
+            # string literally includes that Python-source indentation as
+            # part of the string content -- so this showed as raw HTML text
+            # instead of the actual empty-state message. Every other
+            # unsafe_allow_html call in this file already avoids the problem
+            # by concatenating single-line string literals instead (no
+            # embedded newlines/indentation); doing the same here.
             st.markdown(
-                """
-                <div class="results-empty-container">
-                    <div style="font-size:2.8rem; margin-bottom:0.8rem;">📋</div>
-                    <h3 style="color:#0f172a; margin-bottom:0.4rem;">No Active Analysis Yet</h3>
-                    <p style="color:#64748b; max-width:460px; margin:0 auto 1.4rem auto; font-size:1rem; line-height:1.5;">
-                        Paste a YouTube link or local video file in <strong>Chat</strong> to generate a complete summary, action items, key decisions, and searchable transcript.
-                    </p>
-                </div>
-                """,
+                '<div class="results-empty-container">'
+                '<div style="font-size:2.8rem; margin-bottom:0.8rem;">📋</div>'
+                '<h3 style="color:#0f172a; margin-bottom:0.4rem;">No Active Analysis Yet</h3>'
+                '<p style="color:#64748b; max-width:460px; margin:0 auto 1.4rem auto; font-size:1rem; line-height:1.5;">'
+                'Paste a YouTube link or local video file in <strong>Chat</strong> to generate a complete summary, action items, key decisions, and searchable transcript.'
+                '</p>'
+                '</div>',
                 unsafe_allow_html=True,
             )
             _, c_btn, _ = st.columns([1, 1, 1])
@@ -912,14 +945,16 @@ def render_dashboard():
             card_cols = st.columns(4)
             for col, (icon, value, label) in zip(card_cols, cards):
                 with col:
+                    # Same fix as the Results empty-state and Admin cards
+                    # above/below: flat concatenated string, no embedded
+                    # newlines/indentation, so Markdown can't mistake it for
+                    # an indented code block.
                     st.markdown(
-                        f"""
-                        <div class="stat-card">
-                            <div class="stat-card-icon">{icon}</div>
-                            <div class="stat-card-value">{value}</div>
-                            <div class="stat-card-label">{label}</div>
-                        </div>
-                        """,
+                        '<div class="stat-card">'
+                        f'<div class="stat-card-icon">{icon}</div>'
+                        f'<div class="stat-card-value">{value}</div>'
+                        f'<div class="stat-card-label">{label}</div>'
+                        '</div>',
                         unsafe_allow_html=True,
                     )
 
@@ -1079,3 +1114,165 @@ def render_dashboard():
                         f"</div>",
                         unsafe_allow_html=True,
                     )
+
+    # ---- Admin ----
+    elif nav == "Admin":
+        from auth.auth_manager import is_admin
+
+        # Defense in depth: the sidebar only shows this button to admins,
+        # but dash_nav is just session state -- guard the actual data here
+        # too rather than relying solely on the button being hidden.
+        if not is_admin(email):
+            st.error("You don't have access to this page.")
+        else:
+            import html as _html
+            from db.session import get_db
+            from db.models import User, ChatSession, HistoryEntry
+
+            st.markdown(
+                '<div class="stats-heading">🛡️ Admin overview</div>',
+                unsafe_allow_html=True,
+            )
+
+            with get_db() as db:
+                total_users = db.query(User).count()
+                total_sessions = db.query(ChatSession).count()
+                total_history = db.query(HistoryEntry).count()
+
+                rows = []
+                for u in db.query(User).order_by(User.created_at).all():
+                    rows.append({
+                        "email": u.email,
+                        "name": u.display_name or "",
+                        "role": u.role,
+                        "joined": u.created_at.strftime("%Y-%m-%d") if u.created_at else "—",
+                        "chats": db.query(ChatSession).filter_by(user_id=u.id).count(),
+                        "analyses": db.query(HistoryEntry).filter_by(user_id=u.id).count(),
+                        "has_bcrypt": bool(u.bcrypt_hash),
+                    })
+
+            # ---- Top-line stat cards (same style as the Stats page) ----
+            admin_cards = [
+                ("👥", str(total_users), "Total users"),
+                ("💬", str(total_sessions), "Total chat sessions"),
+                ("📊", str(total_history), "Total analyses"),
+            ]
+            admin_card_cols = st.columns(3)
+            for col, (icon, value, label) in zip(admin_card_cols, admin_cards):
+                with col:
+                    st.markdown(
+                        '<div class="stat-card">'
+                        f'<div class="stat-card-icon">{icon}</div>'
+                        f'<div class="stat-card-value">{value}</div>'
+                        f'<div class="stat-card-label">{label}</div>'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("<div style='height:1.6rem;'></div>", unsafe_allow_html=True)
+
+            # ---- User table ----
+            st.markdown('<div class="chart-section-title">Users</div>', unsafe_allow_html=True)
+
+            search = st.text_input(
+                "Search users",
+                placeholder="Search by name or email...",
+                label_visibility="collapsed",
+            )
+            if search.strip():
+                needle = search.strip().lower()
+                visible_rows = [
+                    r for r in rows
+                    if needle in r["email"].lower() or needle in r["name"].lower()
+                ]
+            else:
+                visible_rows = rows
+
+            # Most active users first -- more useful at a glance than join order.
+            visible_rows = sorted(visible_rows, key=lambda r: r["analyses"], reverse=True)
+
+            if not visible_rows:
+                st.info("No users match that search.")
+            else:
+                table_rows_html = []
+                for r in visible_rows:
+                    safe_email = _html.escape(r["email"])
+                    safe_name = _html.escape(r["name"]) if r["name"] else ""
+                    initial = _html.escape((r["name"] or r["email"])[0].upper())
+                    name_html = (
+                        f'<div class="admin-user-name">{safe_name}</div>'
+                        if safe_name else
+                        '<div class="admin-user-name admin-empty-cell">No name set</div>'
+                    )
+                    role_badge = (
+                        '<span class="badge-pill badge-admin">Admin</span>'
+                        if r["role"] == "admin" else
+                        '<span class="badge-pill badge-neutral">User</span>'
+                    )
+                    pw_badge = (
+                        '<span class="badge-pill badge-success">bcrypt</span>'
+                        if r["has_bcrypt"] else
+                        '<span class="badge-pill badge-warning">Not upgraded</span>'
+                    )
+                    # Bug fix: this used to be a multi-line, deeply-indented
+                    # f-string. Streamlit's markdown renderer treats any line
+                    # indented 4+ spaces as a literal code block -- since this
+                    # HTML was built inside nested for/if blocks, every line
+                    # inherited a lot of leading whitespace from the Python
+                    # source itself, so the whole table rendered as visible
+                    # raw HTML text instead of an actual table. Building it as
+                    # ONE unindented line per row sidesteps that entirely.
+                    table_rows_html.append(
+                        "<tr>"
+                        "<td><div class='admin-user-cell'>"
+                        f"<div class='admin-avatar'>{initial}</div>"
+                        f"<div>{name_html}"
+                        f"<div class='admin-user-email'>{safe_email}</div>"
+                        "</div></div></td>"
+                        f"<td>{role_badge}</td>"
+                        f"<td>{r['joined']}</td>"
+                        f"<td>{r['chats']}</td>"
+                        f"<td>{r['analyses']}</td>"
+                        f"<td>{pw_badge}</td>"
+                        "</tr>"
+                    )
+
+                table_html = (
+                    "<div class='admin-table-wrap'>"
+                    "<table class='admin-table'>"
+                    "<thead><tr>"
+                    "<th>User</th><th>Role</th><th>Joined</th>"
+                    "<th>Chats</th><th>Analyses</th><th>Password</th>"
+                    "</tr></thead>"
+                    f"<tbody>{''.join(table_rows_html)}</tbody>"
+                    "</table></div>"
+                )
+                st.markdown(table_html, unsafe_allow_html=True)
+
+            # ---- Activity chart ----
+            active_rows = [r for r in rows if r["analyses"] > 0]
+            if len(active_rows) >= 2:
+                import plotly.express as px
+
+                st.markdown("<div style='height:1.8rem;'></div>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="chart-section-title">Analyses per user</div>',
+                    unsafe_allow_html=True,
+                )
+                chart_df = pd.DataFrame({
+                    "user": [r["name"] or r["email"] for r in active_rows],
+                    "analyses": [r["analyses"] for r in active_rows],
+                }).sort_values("analyses", ascending=True)
+
+                fig = px.bar(
+                    chart_df, x="analyses", y="user", orientation="h",
+                    color_discrete_sequence=["#2563EB"],
+                )
+                fig.update_layout(
+                    height=max(220, 46 * len(chart_df)),
+                    margin=dict(l=0, r=10, t=10, b=10),
+                    xaxis_title=None, yaxis_title=None,
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+

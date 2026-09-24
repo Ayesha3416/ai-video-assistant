@@ -1,35 +1,38 @@
-import json
-import os
-import re
+"""User auth, now backed by the SQLite DB (db/models.py) instead of
+data/users.json. Public API is unchanged on purpose -- register_user(),
+verify_user(), get_display_name() keep the exact same signatures/return
+shapes -- so ui/auth_pages.py, ui/navbar.py, ui/sidebar.py needed no changes
+at all for this switch.
+
+Step 7a already migrated existing accounts into the users table; this file
+now reads/writes that table instead of the old JSON, using the same
+bcrypt-with-legacy-fallback logic Step 5 established (see db/models.py
+User docstring for why bcrypt_hash / legacy_salt / legacy_password_hash all
+exist side by side).
+"""
 import hashlib
-import secrets
+import re
 
-from config.paths import DATA_DIR, USERS_JSON
+import bcrypt
 
-USERS_FILE = str(USERS_JSON)
+from config import settings
+from db.session import get_db
+from db.models import User
+
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def _ensure_users_file():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if not os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump({}, f)
-
-
-def _load_users() -> dict:
-    _ensure_users_file()
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _save_users(users: dict):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2)
-
-
-def _hash_password(password: str, salt: str) -> str:
+def _hash_password_legacy(password: str, salt: str) -> str:
+    """Old scheme (salted SHA-256). Only used to verify accounts that haven't
+    logged in since the bcrypt switch -- never used for new hashes."""
     return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+
+def _hash_password_bcrypt(password: str) -> str:
+    hashed = bcrypt.hashpw(
+        password.encode("utf-8"), bcrypt.gensalt(rounds=settings.bcrypt_rounds)
+    )
+    return hashed.decode("utf-8")
 
 
 def register_user(email: str, password: str, display_name: str = "") -> tuple[bool, str]:
@@ -43,36 +46,129 @@ def register_user(email: str, password: str, display_name: str = "") -> tuple[bo
         return False, "Please enter a valid email address."
     if len(password) < 8:
         return False, "Password must be at least 8 characters."
-    users = _load_users()
-    if email in users:
-        return False, "An account with this email already exists."
-    salt = secrets.token_hex(16)
-    password_hash = _hash_password(password, salt)
-    users[email] = {
-        "salt": salt,
-        "password_hash": password_hash,
-        "display_name": display_name,
-    }
-    _save_users(users)
+
+    with get_db() as db:
+        if db.query(User).filter_by(email=email).first():
+            return False, "An account with this email already exists."
+
+        user = User(
+            email=email,
+            display_name=display_name,
+            bcrypt_hash=_hash_password_bcrypt(password),
+        )
+        db.add(user)
+        db.commit()
+
     return True, "Account created successfully!"
+
+
+def _sync_admin_role(user: User) -> None:
+    """Keep role in sync with settings.ADMIN_EMAILS on every login -- so
+    granting/revoking admin access is just editing .env and restarting, no
+    script or manual DB edit needed. Doesn't touch anything else about the
+    account."""
+    should_be_admin = user.email in settings.admin_emails
+    if should_be_admin and user.role != "admin":
+        user.role = "admin"
+    elif not should_be_admin and user.role == "admin":
+        user.role = "user"
 
 
 def verify_user(email: str, password: str) -> tuple[bool, str]:
     email = email.strip().lower()
-    users = _load_users()
 
-    if email not in users:
-        return False, "No account found with that email."
+    with get_db() as db:
+        user = db.query(User).filter_by(email=email).first()
+        if not user:
+            return False, "No account found with that email."
 
-    record = users[email]
-    expected_hash = _hash_password(password, record["salt"])
+        if user.bcrypt_hash:
+            ok = bcrypt.checkpw(
+                password.encode("utf-8"), user.bcrypt_hash.encode("utf-8")
+            )
+            if not ok:
+                return False, "Incorrect password."
+            _sync_admin_role(user)
+            db.commit()
+            return True, "Login successful."
 
-    if expected_hash == record["password_hash"]:
-        return True, "Login successful."
-    return False, "Incorrect password."
+        # Legacy salted-SHA-256 account: verify the old way, then transparently
+        # upgrade to bcrypt on successful login (same as Step 5's JSON version).
+        expected_hash = _hash_password_legacy(password, user.legacy_salt or "")
+        if expected_hash != user.legacy_password_hash:
+            return False, "Incorrect password."
+
+        user.bcrypt_hash = _hash_password_bcrypt(password)
+        user.legacy_salt = None
+        user.legacy_password_hash = None
+        _sync_admin_role(user)
+        db.commit()
+
+    return True, "Login successful."
+
 
 def get_display_name(email: str) -> str:
     email = email.strip().lower()
-    users = _load_users()
-    record = users.get(email, {})
-    return record.get("display_name") or email.split("@")[0]
+    with get_db() as db:
+        user = db.query(User).filter_by(email=email).first()
+        if user and user.display_name:
+            return user.display_name
+    return email.split("@")[0]
+
+
+def is_admin(email: str) -> bool:
+    email = email.strip().lower()
+    with get_db() as db:
+        user = db.query(User).filter_by(email=email).first()
+        return bool(user and user.role == "admin")
+
+
+def update_display_name(email: str, new_name: str) -> tuple[bool, str]:
+    email = email.strip().lower()
+    new_name = new_name.strip()
+    if not new_name:
+        return False, "Display name can't be empty."
+    if len(new_name) > 100:
+        return False, "Display name is too long (max 100 characters)."
+
+    with get_db() as db:
+        user = db.query(User).filter_by(email=email).first()
+        if not user:
+            return False, "Account not found."
+        user.display_name = new_name
+        db.commit()
+
+    return True, "Display name updated."
+
+
+def change_password(email: str, current_password: str, new_password: str) -> tuple[bool, str]:
+    email = email.strip().lower()
+    if len(new_password) < 8:
+        return False, "New password must be at least 8 characters."
+
+    with get_db() as db:
+        user = db.query(User).filter_by(email=email).first()
+        if not user:
+            return False, "Account not found."
+
+        # Verify the CURRENT password first, same bcrypt-or-legacy check
+        # verify_user() uses, so this can't be used to overwrite a password
+        # without proving you know the existing one.
+        if user.bcrypt_hash:
+            ok = bcrypt.checkpw(
+                current_password.encode("utf-8"), user.bcrypt_hash.encode("utf-8")
+            )
+        else:
+            ok = _hash_password_legacy(
+                current_password, user.legacy_salt or ""
+            ) == user.legacy_password_hash
+
+        if not ok:
+            return False, "Current password is incorrect."
+
+        user.bcrypt_hash = _hash_password_bcrypt(new_password)
+        user.legacy_salt = None
+        user.legacy_password_hash = None
+        db.commit()
+
+    return True, "Password changed successfully."

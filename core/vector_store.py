@@ -1,5 +1,6 @@
 import os
 import shutil
+import time
 import uuid
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -16,6 +17,17 @@ CHROMA_ROOT = str(VECTOR_DB_DIR)
 COLLECTION_NAME = "meeting_transcript"
 EMBEDDING_MODEL = settings.embedding_model
 
+# How long an unused vector-store folder is allowed to sit on disk before
+# cleanup removes it. Bug fix (was: every new analysis deleted ALL existing
+# vector stores immediately, including ones other active sessions/users were
+# still chatting against, since nothing here is scoped per-user or
+# per-session). Age-based cleanup bounds disk growth the same way without
+# destroying live sessions. 2 hours comfortably outlives a normal analysis +
+# chat session; tune via VECTOR_STORE_MAX_AGE_HOURS if needed.
+MAX_STORE_AGE_SECONDS = int(
+    os.environ.get("VECTOR_STORE_MAX_AGE_HOURS", "2")
+) * 3600
+
 
 def get_embeddings():
     return HuggingFaceEmbeddings(
@@ -25,14 +37,22 @@ def get_embeddings():
 
 
 def _cleanup_old_stores():
-    """Remove previous vector store folders so disk doesn't fill up over time."""
-    if os.path.exists(CHROMA_ROOT):
-        for name in os.listdir(CHROMA_ROOT):
-            path = os.path.join(CHROMA_ROOT, name)
-            try:
+    """Remove vector store folders older than MAX_STORE_AGE_SECONDS, so disk
+    doesn't fill up over time WITHOUT tearing down stores other active
+    sessions may still be querying (see module docstring / MAX_STORE_AGE_SECONDS
+    comment above for why this replaced an unconditional wipe-everything)."""
+    if not os.path.exists(CHROMA_ROOT):
+        return
+    now = time.time()
+    for name in os.listdir(CHROMA_ROOT):
+        path = os.path.join(CHROMA_ROOT, name)
+        try:
+            age = now - os.path.getmtime(path)
+            if age > MAX_STORE_AGE_SECONDS:
                 shutil.rmtree(path)
-            except Exception as e:
-                log.warning("Could not remove old vector store %s: %s", path, e)
+                log.info("Removed stale vector store %s (age %.0fh)", path, age / 3600)
+        except Exception as e:
+            log.warning("Could not check/remove old vector store %s: %s", path, e)
 
 
 def build_vector_store(transcript: str) -> Chroma:

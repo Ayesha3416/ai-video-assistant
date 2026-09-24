@@ -663,12 +663,20 @@ def load_css():
         button[kind="primaryFormSubmit"]:active {
             transform: translateY(0) !important;
         }
-        /* Ensure ALL text inside blue primary buttons is bright white */
+        /* Ensure ALL text inside blue primary buttons is bright white.
+           (Bug fix: this used to also match EVERY form-submit button
+           regardless of kind, not just primary ones -- harmless as long as
+           every form-submit button in the app was type="primary" with a
+           matching blue background, which was true until the profile
+           edit-name/change-password buttons were added as plain
+           non-primary submit buttons, exposing it as invisible white text
+           on the default white button background. Scoped to [kind="primary"]
+           now, matching what the rule was always meant to do.) */
         button[kind="primary"] *,
         button[kind="primaryFormSubmit"] *,
         .stApp button[kind="primary"] *,
         .stApp button[kind="primaryFormSubmit"] *,
-        div[data-testid="stFormSubmitButton"] button *,
+        div[data-testid="stFormSubmitButton"] button[kind="primary"] *,
         div[data-testid="stButton"] button[kind="primary"] * {
             color: #ffffff !important;
             -webkit-text-fill-color: #ffffff !important;
@@ -858,6 +866,54 @@ def load_css():
         .history-meta { color: #6b7280; font-size: 0.9rem; margin: 0.3rem 0; }
         .history-meta a { color: var(--accent); text-decoration: none; }
         .history-snippet { color: #374151; font-size: 1rem; margin-top: 0.4rem; line-height: 1.5; }
+
+        /* ---------- Admin dashboard ---------- */
+        .admin-table-wrap {
+            background: var(--paper-raised);
+            border: 1px solid var(--hairline);
+            border-radius: 14px;
+            overflow: hidden;
+            margin-top: 0.4rem;
+        }
+        .admin-table { width: 100%; border-collapse: collapse; }
+        .admin-table th {
+            text-align: left;
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--slate-light);
+            background: var(--mist);
+            padding: 0.7rem 1rem;
+            border-bottom: 1px solid var(--hairline);
+        }
+        .admin-table td {
+            padding: 0.7rem 1rem;
+            border-bottom: 1px solid var(--hairline);
+            vertical-align: middle;
+            font-size: 0.92rem;
+            color: var(--ink);
+        }
+        .admin-table tr:last-child td { border-bottom: none; }
+        .admin-table tr:hover td { background: var(--mist); }
+        .admin-user-cell { display: flex; align-items: center; gap: 0.65rem; }
+        .admin-avatar {
+            flex-shrink: 0;
+            width: 34px; height: 34px;
+            border-radius: 50%;
+            background: var(--cobalt);
+            color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 0.95rem;
+            font-family: var(--font-display);
+        }
+        .admin-user-name { font-weight: 600; color: var(--ink); line-height: 1.3; }
+        .admin-user-email { color: var(--slate-light); font-size: 0.82rem; line-height: 1.3; }
+        .badge-admin { background: var(--amber-tint); color: #92400E; border: 1px solid rgba(245,158,11,0.25); }
+        .badge-neutral { background: var(--mist); color: var(--slate); border: 1px solid var(--hairline); }
+        .badge-success { background: #ECFDF5; color: #059669; border: 1px solid rgba(5,150,105,0.2); }
+        .badge-warning { background: #FEF2F2; color: #DC2626; border: 1px solid rgba(220,38,38,0.18); }
+        .admin-empty-cell { color: var(--slate-light); }
 
         /* ---------- Responsive ---------- */
         @media (max-width: 768px) {
