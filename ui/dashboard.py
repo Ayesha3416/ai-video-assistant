@@ -468,6 +468,17 @@ def render_dashboard():
                         if not state["submitted"]:
                             if st.button("Submit Quiz", key=f"submit_{quiz_id}", type="primary"):
                                 state["submitted"] = True
+                                from utils.quiz_attempts import save_attempt  # Step 2 (I-02)
+                                state["saved"] = bool(
+                                    save_attempt(
+                                        email,
+                                        st.session_state.get("current_session_id"),
+                                        (st.session_state.get("result") or {}).get("title", ""),
+                                        quiz_id,
+                                        questions,
+                                        state["answers"],
+                                    )
+                                )
                                 st.rerun()
                         else:
                             score = sum(
@@ -475,6 +486,19 @@ def render_dashboard():
                                 if state["answers"][qi] == q["correct_index"]
                             )
                             st.markdown(f"**Score: {score} / {len(questions)}**")
+                            if state.get("saved"):
+                                st.caption("Attempt saved — see your score trend under Stats.")
+                            elif state.get("saved") is False:
+                                st.caption("Couldn't save this attempt (see the logs).")
+                            from ui.flashcards_page import render_quiz_mistakes_button  # Step 3
+                            render_quiz_mistakes_button(
+                                email,
+                                quiz_id,
+                                questions,
+                                state["answers"],
+                                st.session_state.get("current_session_id"),
+                                (st.session_state.get("result") or {}).get("title", ""),
+                            )
 
                 elif msg.get("type") == "notes":
                     notes = msg["notes"]
@@ -915,6 +939,19 @@ def render_dashboard():
                 "#14b8a6", "#f59e0b", "#f97316", "#6b7280",
             ]
 
+            # One fixed colour per category so the pie and bar charts always agree,
+            # no matter how each chart's data happens to be ordered.
+            CATEGORY_COLORS = {
+                "Business": "#1e3a8a",
+                "Education": "#2563eb",
+                "Entertainment": "#60a5fa",
+                "Music": "#0ea5e9",
+                "Technology": "#14b8a6",
+                "News": "#f59e0b",
+                "Sports": "#f97316",
+                "Other": "#6b7280",
+            }
+
             top_category = (
                 cat_df.loc[cat_df["count"].idxmax(), "category"]
                 if not cat_df.empty else "—"
@@ -974,11 +1011,12 @@ def render_dashboard():
                         hole=0.55,
                         color="category",
                         color_discrete_sequence=COLOR_SEQUENCE,
+                        color_discrete_map=CATEGORY_COLORS,
                     )
                     fig_pie.update_traces(textinfo="percent+label", textfont_size=11)
                     fig_pie.update_layout(
                         showlegend=False,
-                        margin=dict(t=10, b=10, l=10, r=10),
+                        margin=dict(t=30, b=30, l=10, r=10),
                         height=280,
                         font=dict(family="Inter, sans-serif", color="#374151"),
                     )
@@ -992,6 +1030,7 @@ def render_dashboard():
                         orientation="h",
                         color="category",
                         color_discrete_sequence=COLOR_SEQUENCE,
+                        color_discrete_map=CATEGORY_COLORS,
                     )
                     fig_bar.update_layout(
                         showlegend=False,
@@ -1072,6 +1111,10 @@ def render_dashboard():
                 )
                 st.plotly_chart(fig_area, use_container_width=True)
 
+            # ---- Quiz progress (Step 2 / I-02) ----
+            from ui.quiz_progress import render_quiz_progress
+            render_quiz_progress(email)
+
 
 
     # ---- History ----
@@ -1114,6 +1157,11 @@ def render_dashboard():
                         f"</div>",
                         unsafe_allow_html=True,
                     )
+
+    # ---- Flashcards (Step 3) ----
+    elif nav == "Flashcards":
+        from ui.flashcards_page import render_flashcards_page
+        render_flashcards_page(email)
 
     # ---- Admin ----
     elif nav == "Admin":

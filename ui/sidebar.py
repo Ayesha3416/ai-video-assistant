@@ -87,12 +87,14 @@ def render_sidebar():
                 st.session_state.dash_nav = "Chat"
                 st.rerun()
 
+            from ui.flashcards_page import nav_label as _flashcards_nav_label  # Step 3
             nav_items = [
                 # "Results" was previously unreachable: ui/dashboard.py had a
                 # full Summary/Action Items/Key Decisions/Transcript/Export
                 # view behind `nav == "Results"`, but nothing ever set
                 # dash_nav to "Results" -- this button is the fix.
                 ("Results", "Results", ":material/description:"),
+                (_flashcards_nav_label(email), "Flashcards", ":material/style:"),  # Step 3
                 ("Stats", "Stats", ":material/bar_chart:"),
                 ("History", "History", ":material/history:"),
             ]

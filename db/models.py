@@ -80,3 +80,55 @@ class HistoryEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped["User"] = relationship(back_populates="history_entries")
+
+
+class QuizAttempt(Base):
+    """One submitted quiz (Step 2 / issue I-02).
+
+    Stores the questions and the picked answers, not just the score, so an
+    attempt can be reviewed later and its mistakes reused (e.g. for flashcards).
+    Attempts are kept even if the chat session they came from is deleted.
+    """
+
+    __tablename__ = "quiz_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    # chat_sessions.id of the conversation the quiz was taken in (not a FK on purpose).
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    quiz_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    video_title: Mapped[str] = mapped_column(String(255), default="")
+    num_questions: Mapped[int] = mapped_column(default=0)
+    score: Mapped[int] = mapped_column(default=0)
+    # [{"question": str, "options": [str, ...], "correct_index": int}, ...]
+    questions: Mapped[list] = mapped_column(JSON, default=list)
+    # [picked_option_index | None, ...] -- same order as `questions`
+    answers: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class Flashcard(Base):
+    """One flashcard with its spaced-repetition state (Step 3, decision D-07).
+
+    ``stage`` = consecutive successful reviews (0 = new / just missed).
+    ``due_at`` = MIDNIGHT of the day the card is next due (due when due_at <= now).
+    ``card_key`` = hash of the normalised question, used to skip duplicates per user.
+    """
+
+    __tablename__ = "flashcards"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    # chat_sessions.id the card came from (not a FK on purpose: cards outlive chats).
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    video_title: Mapped[str] = mapped_column(String(255), default="")
+    source: Mapped[str] = mapped_column(String(20), default="video")  # video | quiz | manual
+    card_key: Mapped[str] = mapped_column(String(40), index=True)
+    front: Mapped[str] = mapped_column(Text)
+    back: Mapped[str] = mapped_column(Text)
+    stage: Mapped[int] = mapped_column(default=0)
+    due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    times_correct: Mapped[int] = mapped_column(default=0)
+    times_wrong: Mapped[int] = mapped_column(default=0)
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

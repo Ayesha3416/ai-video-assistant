@@ -1,19 +1,42 @@
+"""Generate study notes from a video transcript (fix: whole-video coverage).
+
+Before this fix, generate_notes only ever looked at content[:8000] -- on a
+long video that's just the first several minutes. This version splits the
+transcript into evenly-spaced chunks (same helper Step 3's flashcards use),
+asks for a handful of sections per chunk, and concatenates them IN VIDEO
+ORDER (unlike the quiz, notes should read start-to-end, not be shuffled).
+
+Public signature is unchanged (generate_notes(content) -> dict,
+build_notes_pdf(notes, video_title) -> bytes), so no caller needs to change.
+"""
+
 import json
+import math
 import re
+import time
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from fpdf import FPDF
 
+from config import get_logger
+from core.flashcard_utils import select_chunks
 from core.llm import get_llm, invoke_with_retry
 
+log = get_logger(__name__)
 
-NOTES_SYSTEM_PROMPT = """You are an expert note-taker. Based on the video transcript/summary given, \
-write clear, well-organized study notes covering everything important in the video.
+#: At most this many LLM calls per set of notes (keeps latency and rate limits sane).
+MAX_CHUNKS = 4
+CHUNK_CHARS = 4000
+#: Total sections across the whole video, spread evenly over the chunks used.
+MAX_TOTAL_SECTIONS = 12
+
+NOTES_SYSTEM_PROMPT = """You are an expert note-taker. Based on the video transcript/summary excerpt \
+given, write clear, well-organized study notes covering everything important in THIS EXCERPT.
 
 Respond with ONLY a valid JSON object (no markdown fences, no extra text) with this exact shape:
 {{
-  "title": "A short descriptive title for these notes",
+  "title": "A short descriptive title for the whole video (your best guess from this excerpt)",
   "sections": [
     {{
       "heading": "Section heading",
@@ -23,9 +46,9 @@ Respond with ONLY a valid JSON object (no markdown fences, no extra text) with t
 }}
 
 Rules:
-- Break the content into 3 to 8 logical sections with clear headings.
+- Break this excerpt into at most {max_sections} logical section(s) with clear headings.
 - Each section should have 2 to 6 concise bullet points — no long paragraphs.
-- Cover the actual content of the video; do not invent facts.
+- Cover the actual content of this excerpt; do not invent facts.
 - Output ONLY the JSON object, nothing else, no commentary before or after it."""
 
 
@@ -37,21 +60,20 @@ def _extract_json_object(raw: str) -> str:
     return raw
 
 
-def generate_notes(content: str) -> dict:
-    """content: transcript (preferred) or summary text to base the notes on.
-    Returns {"title": str, "sections": [{"heading": str, "bullets": [str, ...]}, ...]}.
-    Raises ValueError if the model's output can't be parsed into that shape.
-    """
+def _ask_llm(chunk: str, max_sections: int) -> str:
+    """One LLM call for one transcript chunk. Isolated so tests can replace it."""
     llm = get_llm()
     prompt = ChatPromptTemplate.from_messages([
         ("system", NOTES_SYSTEM_PROMPT),
         ("human", "{text}"),
     ])
     chain = prompt | llm | StrOutputParser()
+    return invoke_with_retry(chain, {"text": chunk, "max_sections": max_sections})
 
-    raw = invoke_with_retry(chain, {"text": content[:8000]})
+
+def _parse_chunk_notes(raw: str) -> dict:
+    """Parse one chunk's raw LLM reply, or raise ValueError."""
     cleaned = _extract_json_object(raw)
-
     try:
         notes = json.loads(cleaned)
     except json.JSONDecodeError as e:
@@ -74,10 +96,45 @@ def generate_notes(content: str) -> dict:
     if not cleaned_sections:
         raise ValueError("The notes response didn't contain any well-formed sections.")
 
-    return {
-        "title": notes.get("title") if isinstance(notes.get("title"), str) else "Video Notes",
-        "sections": cleaned_sections,
-    }
+    title = notes.get("title") if isinstance(notes.get("title"), str) else None
+    return {"title": title, "sections": cleaned_sections}
+
+
+def generate_notes(content: str) -> dict:
+    """content: transcript (preferred) or summary text to base the notes on.
+    Returns {"title": str, "sections": [{"heading": str, "bullets": [str, ...]}, ...]}.
+    Raises ValueError if no usable section could be generated at all.
+    """
+    chunks = select_chunks(content, max_chunks=MAX_CHUNKS, size=CHUNK_CHARS)
+    if not chunks:
+        raise ValueError("There is no transcript or summary to make notes from.")
+
+    sections_per_chunk = max(1, math.ceil(MAX_TOTAL_SECTIONS / len(chunks)))
+    title = None
+    all_sections = []
+    failures = 0
+
+    for i, chunk in enumerate(chunks):
+        if i > 0:
+            time.sleep(0.8)  # light pacing between chunk calls to avoid tripping Groq's rate limit
+        try:
+            partial = _parse_chunk_notes(_ask_llm(chunk, sections_per_chunk))
+        except ValueError as exc:
+            failures += 1
+            log.warning("Notes: skipping chunk %d/%d (%s)", i + 1, len(chunks), exc)
+            continue
+        if title is None and partial["title"]:
+            title = partial["title"]
+        all_sections.extend(partial["sections"])  # kept in video order, not interleaved
+
+    if not all_sections:
+        raise ValueError(
+            "Couldn't generate notes for this video"
+            + (" (the model's replies could not be read)." if failures else ".")
+        )
+
+    log.info("Generated %d note section(s) from %d chunk(s)", len(all_sections), len(chunks))
+    return {"title": title or "Video Notes", "sections": all_sections[:MAX_TOTAL_SECTIONS]}
 
 
 def _sanitize_text(text: str) -> str:
