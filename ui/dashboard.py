@@ -6,9 +6,9 @@ import re
 from datetime import datetime
 from ui.sidebar import render_sidebar
 import pandas as pd
-from main import run_pipeline
+from main import run_pipeline, run_pdf_pipeline
 from config import settings
-from utils.uploads import ALLOWED_EXTENSIONS, UploadError, save_uploaded_file
+from utils.uploads import UploadError, validate_pdf_upload
 from core.rag_engine import ask_question
 from core.quiz_generator import generate_quiz
 from core.notes_generator import generate_notes, build_notes_pdf
@@ -21,7 +21,17 @@ from utils.history_manager import (
     get_category_dataframe,
 )
 
-SOURCE_EXTENSIONS = ALLOWED_EXTENSIONS
+SOURCE_EXTENSIONS = (
+    ".mp4",
+    ".mp3",
+    ".wav",
+    ".mkv",
+    ".mov",
+    ".avi",
+    ".m4a",
+    ".webm",
+    ".flac",
+)
 
 
 def _looks_like_source(text: str) -> bool:
@@ -247,12 +257,13 @@ STAGE_LABELS = {
     "transcribing": "Transcribing",
     "summarizing": "Summarizing",
     "extracting": "Extracting information",
+    "reading_pdf": "Reading PDF",
     "building_rag": "Building knowledge base",
     "completed": "Completed",
 }
 
 
-def _run_pipeline_with_status(source: str, language: str):
+def _run_pipeline_with_status(source: str, language: str, pdf_bytes=None, pdf_name=None):
     status_box = st.status("Starting analysis...", expanded=True)
 
     def on_progress(stage, message):
@@ -261,11 +272,14 @@ def _run_pipeline_with_status(source: str, language: str):
         status_box.write(message)
 
     try:
-        result = run_pipeline(
-            source,
-            language,
-            on_progress=on_progress,
-        )
+        if pdf_bytes is not None:
+            result = run_pdf_pipeline(pdf_bytes, pdf_name or "document.pdf", on_progress=on_progress)
+        else:
+            result = run_pipeline(
+                source,
+                language,
+                on_progress=on_progress,
+            )
 
         status_box.update(
             label="Analysis complete",
@@ -563,50 +577,52 @@ def render_dashboard():
         )
 
         placeholder = (
-            "Paste a YouTube link, or ask a question..."
+            "Paste a YouTube link, attach a PDF with 📎, or ask a question..."
             if not result
             else "Ask a question about this video, or paste a new link to analyze..."
         )
 
-        # ---- Upload a file instead of pasting a link ----
-        upload_source = None
+        # ---- One bar for everything: type a question, paste a YouTube link,
+        # or attach a PDF with the 📎 button inside the bar. ----
+        # accept_file needs Streamlit >= 1.43 (see requirements.txt).
+        upload_bytes = None
         upload_label = None
-        uploader_round = st.session_state.get("uploader_round", 0)
-        with st.expander("📎 Upload a video or audio file instead", expanded=False):
-            uploaded = st.file_uploader(
-                "Choose a file",
-                type=[ext.lstrip(".") for ext in SOURCE_EXTENSIONS],
-                key=f"video_uploader_{uploader_round}",
-                label_visibility="collapsed",
+        message = None
+        try:
+            chat_value = st.chat_input(
+                placeholder,
+                accept_file=True,
+                file_type=["pdf"],
             )
-            if uploaded is not None:
-                st.caption(f"{uploaded.name} · {uploaded.size / 1_048_576:.1f} MB")
-            if st.button(
-                "Analyze uploaded file",
-                key="analyze_upload_btn",
-                disabled=uploaded is None,
-                use_container_width=True,
-            ):
+        except TypeError:
+            st.warning(
+                "Your Streamlit version is too old for the PDF attach button. "
+                "Run: pip install -U \"streamlit>=1.43\" and restart the app."
+            )
+            chat_value = None
+
+        if chat_value:
+            message = (getattr(chat_value, "text", None) or "").strip() or None
+            attached = list(getattr(chat_value, "files", None) or [])
+            if attached:
+                pdf_file = attached[0]
                 try:
-                    upload_source, upload_label = save_uploaded_file(
-                        uploaded.name, uploaded.getbuffer()
-                    )
-                    # New key next run => the uploader empties itself.
-                    st.session_state.uploader_round = uploader_round + 1
+                    data = pdf_file.getvalue()
+                    upload_label = validate_pdf_upload(pdf_file.name, data)
+                    upload_bytes = data
+                    message = f"📄 Uploaded PDF: {upload_label}"
                 except UploadError as e:
                     st.error(str(e))
-
-        message = st.chat_input(placeholder)
-        if upload_source:
-            message = f"📎 Uploaded file: {upload_label}"
+                    message = None
 
         if message:
 
-            # An uploaded file is never a "show me a frame" request, even if
-            # its filename happens to contain a word like "screen" or "slide".
+            # PDFs have no video frames, and an upload is never a "show me a
+            # frame" request even if its filename contains a word like "slide".
+            _is_pdf_chat = str((result or {}).get("source", "")).startswith("PDF:")
             frame_request = (
                 None
-                if upload_source
+                if (upload_bytes is not None or _is_pdf_chat)
                 else _classify_frame_request(message, st.session_state.chat_history)
             )
 
@@ -633,9 +649,9 @@ def render_dashboard():
                 height=0,
             )
 
-            # ---- User pasted a video URL or uploaded a file ----
-            clean_source = upload_source or message.strip().strip("\"'").strip()
-            if upload_source or _looks_like_source(clean_source):
+            # ---- User pasted a video URL or uploaded a PDF ----
+            clean_source = message.strip().strip("\"'").strip()
+            if upload_bytes is not None or _looks_like_source(clean_source):
 
                 # Pasting a new video link always starts a fresh conversation.
                 # The previous conversation is already saved in Recent — it's
@@ -655,6 +671,8 @@ def render_dashboard():
                 new_result, error = _run_pipeline_with_status(
                     clean_source,
                     st.session_state.chat_language,
+                    pdf_bytes=upload_bytes,
+                    pdf_name=upload_label,
                 )
 
                 if error:
@@ -701,7 +719,7 @@ def render_dashboard():
                         "role": "assistant",
                         "content": (
                             "I don't have a video to talk about yet — "
-                            "paste a YouTube link or upload a video/audio file first."
+                            "paste a YouTube link or upload a PDF first."
                         ),
                         "time": datetime.now().strftime("%I:%M %p"),
                     }
@@ -871,7 +889,7 @@ def render_dashboard():
                 '<div style="font-size:2.8rem; margin-bottom:0.8rem;">📋</div>'
                 '<h3 style="color:#0f172a; margin-bottom:0.4rem;">No Active Analysis Yet</h3>'
                 '<p style="color:#64748b; max-width:460px; margin:0 auto 1.4rem auto; font-size:1rem; line-height:1.5;">'
-                'Paste a YouTube link or upload a video/audio file in <strong>Chat</strong> to generate a complete summary, action items, key decisions, and searchable transcript.'
+                'Paste a YouTube link or upload a PDF in <strong>Chat</strong> to generate a complete summary, action items, key decisions, and searchable transcript.'
                 '</p>'
                 '</div>',
                 unsafe_allow_html=True,

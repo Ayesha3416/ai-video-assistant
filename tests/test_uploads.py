@@ -1,68 +1,113 @@
-"""Step 8: uploaded-file handling.
+"""Step 8: PDF upload validation and text extraction.
 
     pytest tests/test_uploads.py -v
 """
 
-import os
-import time
+import io
+from types import SimpleNamespace
 
 import pytest
 
 from utils import uploads
-from utils.uploads import UploadError, save_uploaded_file, cleanup_old_uploads
+from utils.uploads import UploadError, validate_pdf_upload
+from core.pdf_reader import PdfError, extract_pdf_text, MAX_PDF_CHARS
 
 
-@pytest.fixture(autouse=True)
-def _tmp_uploads(tmp_path, monkeypatch):
-    monkeypatch.setattr(uploads.paths, "UPLOADS_DIR", tmp_path / "uploads")
-    return tmp_path / "uploads"
+def _make_pdf(text: str, pages: int = 1) -> bytes:
+    """Build a small real PDF with selectable text (needs reportlab or fpdf2)."""
+    try:
+        from reportlab.pdfgen import canvas
+
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf)
+        for _ in range(pages):
+            y = 800
+            for line in text.split("\n"):
+                c.drawString(40, y, line)
+                y -= 14
+            c.showPage()
+        c.save()
+        return buf.getvalue()
+    except ImportError:
+        from fpdf import FPDF
+
+        pdf = FPDF()
+        for _ in range(pages):
+            pdf.add_page()
+            pdf.set_font("Helvetica", size=11)
+            for line in text.split("\n"):
+                pdf.cell(0, 8, line, new_x="LMARGIN", new_y="NEXT")
+        return bytes(pdf.output())
 
 
-def test_valid_upload_is_saved_with_random_name(_tmp_uploads):
-    path, shown = save_uploaded_file("My Lecture.MP4", b"fake video bytes")
-    assert os.path.exists(path)
-    assert path.endswith(".mp4")
-    assert "Lecture" not in os.path.basename(path)  # original name never used on disk
-    assert shown == "My Lecture.MP4"
-    assert os.path.dirname(path) == str(_tmp_uploads)
+LONG_TEXT = "\n".join(
+    f"Line {i}: Retrieval augmented generation combines search with a language model."
+    for i in range(20)
+)
 
 
-def test_path_traversal_name_cannot_escape(_tmp_uploads):
-    path, shown = save_uploaded_file("../../etc/evil.mp3", b"x")
-    assert os.path.dirname(path) == str(_tmp_uploads)
-    assert "/" not in shown and ".." not in shown.replace("...", "")
+# ------------------------------------------------------------ validation
+
+def test_valid_pdf_passes_and_returns_safe_name():
+    data = _make_pdf(LONG_TEXT)
+    assert validate_pdf_upload("My Notes.PDF", data) == "My Notes.PDF"
 
 
-def test_bad_extension_rejected():
+def test_path_and_html_in_filename_are_neutralised():
+    data = _make_pdf(LONG_TEXT)
+    shown = validate_pdf_upload("../../<script>x</script>.pdf", data)
+    assert "/" not in shown and "<" not in shown and ">" not in shown
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "video.mp4", "song.mp3", "run.py", "doc.docx"])
+def test_non_pdf_extensions_rejected(name):
     with pytest.raises(UploadError):
-        save_uploaded_file("script.py", b"print('hi')")
+        validate_pdf_upload(name, b"%PDF-1.4 whatever")
+
+
+def test_renamed_non_pdf_rejected():
+    with pytest.raises(UploadError):
+        validate_pdf_upload("fake.pdf", b"MZ\x90\x00 not a pdf at all")
 
 
 def test_empty_file_rejected():
     with pytest.raises(UploadError):
-        save_uploaded_file("a.mp3", b"")
+        validate_pdf_upload("a.pdf", b"")
 
 
 def test_too_large_rejected(monkeypatch):
-    from types import SimpleNamespace
-    monkeypatch.setattr(
-        uploads, "settings",
-        SimpleNamespace(max_upload_mb=0, upload_retention_hours=24),
-    )
+    monkeypatch.setattr(uploads, "settings", SimpleNamespace(max_upload_mb=0))
     with pytest.raises(UploadError):
-        save_uploaded_file("a.mp3", b"x")
+        validate_pdf_upload("a.pdf", b"%PDF-1.4 x")
 
 
-def test_html_in_filename_is_neutralised():
-    _, shown = save_uploaded_file("<script>alert(1)</script>.mp3", b"x")
-    assert "<" not in shown and ">" not in shown
+# ------------------------------------------------------------ extraction
+
+def test_extracts_text_from_real_pdf():
+    text, truncated = extract_pdf_text(_make_pdf(LONG_TEXT, pages=2))
+    assert "Retrieval augmented generation" in text
+    assert truncated is False
 
 
-def test_cleanup_removes_only_old_files(_tmp_uploads):
-    old_path, _ = save_uploaded_file("old.mp3", b"x")
-    new_path, _ = save_uploaded_file("new.mp3", b"x")
-    two_days_ago = time.time() - 48 * 3600
-    os.utime(old_path, (two_days_ago, two_days_ago))
-    assert cleanup_old_uploads(max_age_hours=24) >= 1
-    assert not os.path.exists(old_path)
-    assert os.path.exists(new_path)
+def test_garbage_bytes_give_friendly_error():
+    with pytest.raises(PdfError):
+        extract_pdf_text(b"%PDF-1.4 this is not really a pdf")
+
+
+def test_image_only_pdf_is_reported_as_scanned():
+    from pypdf import PdfWriter
+
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)  # a page with no text at all
+    buf = io.BytesIO()
+    w.write(buf)
+    with pytest.raises(PdfError) as exc:
+        extract_pdf_text(buf.getvalue())
+    assert "scanned" in str(exc.value).lower()
+
+
+def test_very_long_pdf_is_truncated():
+    big = "\n".join(f"Sentence number {i} about neural networks and data." for i in range(40))
+    text, truncated = extract_pdf_text(_make_pdf(big, pages=400))
+    assert truncated is True
+    assert len(text) <= MAX_PDF_CHARS

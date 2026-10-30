@@ -12,7 +12,7 @@
 #     Windows: winget install Gyan.FFmpeg
 
 # ---- Web UI ----
-streamlit>=1.40,<2.0
+streamlit>=1.43,<2.0   # 1.43+ needed for the PDF attach button in the chat bar
 
 # ---- Configuration ----
 python-dotenv>=1.0,<2.0
@@ -38,6 +38,7 @@ yt-dlp>=2024.8.6
 
 # ---- Documents ----
 fpdf2>=2.7,<3.0
+pypdf>=4.0,<7.0   # reads text from uploaded PDFs
 
 # ---- Data / charts ----
 pandas>=2.0,<3.0

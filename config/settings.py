@@ -99,10 +99,8 @@ class Settings:
     allow_local_paths: bool = field(
         default_factory=lambda: _get_bool("ALLOW_LOCAL_PATHS", False)
     )
-    max_upload_mb: int = field(default_factory=lambda: _get_int("MAX_UPLOAD_MB", 200))
-    upload_retention_hours: int = field(
-        default_factory=lambda: _get_int("UPLOAD_RETENTION_HOURS", 24)
-    )
+    # Maximum size of an uploaded PDF.
+    max_upload_mb: int = field(default_factory=lambda: _get_int("MAX_UPLOAD_MB", 50))
 
     # ---- Logging ----
     log_level: str = field(default_factory=lambda: _get("LOG_LEVEL", "INFO").upper())
