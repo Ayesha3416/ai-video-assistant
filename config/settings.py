@@ -92,6 +92,18 @@ class Settings:
         default_factory=lambda: _get_int("DOWNLOAD_RETENTION_HOURS", 6)
     )
 
+    # ---- Uploads (Step 8) ----
+    # Typed server-side file paths are a local-development convenience only.
+    # On a public server they would let a visitor point the app at files on
+    # the server, so they are OFF unless explicitly enabled.
+    allow_local_paths: bool = field(
+        default_factory=lambda: _get_bool("ALLOW_LOCAL_PATHS", False)
+    )
+    max_upload_mb: int = field(default_factory=lambda: _get_int("MAX_UPLOAD_MB", 200))
+    upload_retention_hours: int = field(
+        default_factory=lambda: _get_int("UPLOAD_RETENTION_HOURS", 24)
+    )
+
     # ---- Logging ----
     log_level: str = field(default_factory=lambda: _get("LOG_LEVEL", "INFO").upper())
     log_to_file: bool = field(default_factory=lambda: _get_bool("LOG_TO_FILE", True))

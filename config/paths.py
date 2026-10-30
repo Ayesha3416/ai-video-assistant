@@ -20,6 +20,10 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
 FRAMES_DIR = DATA_DIR / "frames"
 
+# Files users upload through the dashboard. Short-lived: utils/uploads.py
+# deletes anything older than UPLOAD_RETENTION_HOURS.
+UPLOADS_DIR = DATA_DIR / "uploads"
+
 # Legacy JSON stores. Step 2 migrates these into SQLite; they are kept
 # afterwards as read-only migration input, never written to again.
 USERS_JSON = DATA_DIR / "users.json"
@@ -49,6 +53,7 @@ THEME_DIR = ROOT_DIR / "ui" / "theme"
 RUNTIME_DIRS = (
     DATA_DIR,
     FRAMES_DIR,
+    UPLOADS_DIR,
     VECTOR_DB_DIR,
     DOWNLOADS_DIR,
     LOGS_DIR,
