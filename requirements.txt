@@ -1,55 +1,31 @@
-# AI Video Assistant -- runtime dependencies
+# AI Video Assistant -- PDF-only deployment on Streamlit Community Cloud
 #
-# Ranges rather than exact pins: your working venv is the authority on exact
-# versions. Once the app runs green, freeze it:
-#     pip freeze > requirements.lock.txt
-# and build the Docker image from the lock file (Step 15).
+# Used as requirements.txt on the "deploy" git branch (main keeps the full one).
+# Exact versions copied from the working local environment (pip freeze); only
+# direct dependencies are pinned, pip resolves the rest.
 #
-# SYSTEM DEPENDENCY: ffmpeg must be on PATH. Both utils/audio_processor.py
-# (via pydub) and core/frame_extractor.py (direct subprocess call) require it.
-#     macOS:  brew install ffmpeg
-#     Debian: apt-get install -y ffmpeg
-#     Windows: winget install Gyan.FFmpeg
+# Needs these secrets / environment values on the host:
+#   ENABLE_VIDEO=false         (no Whisper / yt-dlp / ffmpeg)
+#   EMBEDDING_BACKEND=onnx     (no torch / sentence-transformers)
 
-# ---- Web UI ----
-streamlit>=1.43,<2.0   # 1.43+ needed for the PDF attach button in the chat bar
+streamlit==1.66.1
+python-dotenv==1.2.3
 
-# ---- Configuration ----
-python-dotenv>=1.0,<2.0
+langchain-core==0.3.86
+langchain-groq==0.3.8
+langchain-text-splitters==0.3.11
 
-# ---- LLM orchestration ----
-langchain-core>=0.3,<0.4
-langchain-groq>=0.2,<0.4
-langchain-text-splitters>=0.3,<0.4
+langchain-chroma==0.2.6
+chromadb==1.5.9
 
-# ---- Vector store + embeddings ----
-langchain-chroma>=0.1.4,<0.3
-langchain-huggingface>=0.1,<0.4
-chromadb>=0.5,<2.0
-sentence-transformers>=3.0,<6.0
+fpdf2==2.8.8
+pypdf==6.21.4
 
-# ---- Transcription ----
-openai-whisper>=20231117
-pydub>=0.25,<0.26
-requests>=2.31,<3.0
+pandas==2.3.3
+plotly==6.9.0
 
-# ---- Media ----
-yt-dlp>=2024.8.6
+bcrypt==4.3.0
+itsdangerous==2.2.0
+streamlit-cookies-controller==0.0.4
 
-# ---- Documents ----
-fpdf2>=2.7,<3.0
-pypdf>=4.0,<7.0   # reads text from uploaded PDFs
-
-# ---- Data / charts ----
-pandas>=2.0,<3.0
-plotly>=5.20,<7.0
-
-# ---- Security (Step 3) ----
-bcrypt>=4.1,<5.0
-itsdangerous>=2.1,<3.0
-streamlit-cookies-controller>=0.0.4
-
-# ---- Database (Step 7) ----
-# D-04: SQLite via SQLAlchemy now; the ORM layer is what makes a later
-# Postgres switch a config change instead of a rewrite.
-sqlalchemy>=2.0,<3.0
+sqlalchemy==2.0.52
