@@ -1,13 +1,3 @@
----
-title: AI Video Assistant
-emoji: 🎬
-colorFrom: blue
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # AI Video Assistant
 
 Turn any video or lecture into something you can **chat with, quiz yourself on, and actually remember**.

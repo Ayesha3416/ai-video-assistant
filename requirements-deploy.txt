@@ -1,16 +1,12 @@
-# AI Video Assistant -- PDF-only deployment (ENABLE_VIDEO=false)
+# AI Video Assistant -- PDF-only deployment on Streamlit Community Cloud
 #
-# Exact versions copied from the working local environment (pip freeze), so the
-# server installs what was actually tested. Only direct dependencies are pinned;
-# pip resolves the rest.
+# Used as requirements.txt on the "deploy" git branch (main keeps the full one).
+# Exact versions copied from the working local environment (pip freeze); only
+# direct dependencies are pinned, pip resolves the rest.
 #
-# No Whisper, yt-dlp, pydub, requests or ffmpeg: those are only needed to
-# transcribe videos. Use requirements.txt for the full local app.
-#
-# torch is NOT listed here: the Dockerfile installs the small CPU-only build
-# first (the default PyPI build bundles ~2 GB of GPU libraries we don't need).
-# If you install this file by hand, run this first:
-#   pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+# Needs these secrets / environment values on the host:
+#   ENABLE_VIDEO=false         (no Whisper / yt-dlp / ffmpeg)
+#   EMBEDDING_BACKEND=onnx     (no torch / sentence-transformers)
 
 streamlit==1.66.1
 python-dotenv==1.2.3
@@ -20,9 +16,7 @@ langchain-groq==0.3.8
 langchain-text-splitters==0.3.11
 
 langchain-chroma==0.2.6
-langchain-huggingface==0.3.1
 chromadb==1.5.9
-sentence-transformers==5.7.0
 
 fpdf2==2.8.8
 pypdf==6.21.4

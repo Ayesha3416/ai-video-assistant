@@ -79,6 +79,12 @@ class Settings:
 
     # ---- Pipeline tuning (previously hardcoded) ----
     chunk_minutes: int = field(default_factory=lambda: _get_int("CHUNK_MINUTES", 10))
+    # "huggingface" (default): sentence-transformers + torch, as before.
+    # "onnx": the same all-MiniLM-L6-v2 model through ONNX Runtime. No torch,
+    # so it needs far less memory -- used for the free Streamlit Cloud deployment.
+    embedding_backend: str = field(
+        default_factory=lambda: _get("EMBEDDING_BACKEND", "huggingface").lower()
+    )
     embedding_model: str = field(
         default_factory=lambda: _get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     )
@@ -91,6 +97,12 @@ class Settings:
     download_retention_hours: int = field(
         default_factory=lambda: _get_int("DOWNLOAD_RETENTION_HOURS", 6)
     )
+
+    # ---- Video support ----
+    # True (default): YouTube links / local video need ffmpeg, Whisper, yt-dlp.
+    # False: PDF-only mode for lightweight deployment -- those packages are
+    # never imported, so they need not be installed.
+    enable_video: bool = field(default_factory=lambda: _get_bool("ENABLE_VIDEO", True))
 
     # ---- Uploads (Step 8) ----
     # Typed server-side file paths are a local-development convenience only.

@@ -3,7 +3,7 @@ import shutil
 import time
 import uuid
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
@@ -29,7 +29,40 @@ MAX_STORE_AGE_SECONDS = int(
 ) * 3600
 
 
+class _OnnxMiniLMEmbeddings(Embeddings):
+    """all-MiniLM-L6-v2 run through ONNX Runtime (ships with chromadb).
+
+    Same model as the default backend, but without torch / sentence-transformers,
+    which cuts memory use a lot. The model file (~80 MB) is downloaded on first use.
+    """
+
+    def __init__(self):
+        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
+        self._fn = DefaultEmbeddingFunction()
+
+    def embed_documents(self, texts):
+        return [[float(x) for x in vec] for vec in self._fn(list(texts))]
+
+    def embed_query(self, text):
+        return self.embed_documents([text])[0]
+
+
+_onnx_embeddings = None
+
+
 def get_embeddings():
+    global _onnx_embeddings
+
+    if settings.embedding_backend == "onnx":
+        if _onnx_embeddings is None:
+            log.info("Using ONNX embeddings (no torch)")
+            _onnx_embeddings = _OnnxMiniLMEmbeddings()
+        return _onnx_embeddings
+
+    # Imported here so the "onnx" deployment does not need this package at all.
+    from langchain_huggingface import HuggingFaceEmbeddings
+
     return HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL,
         model_kwargs={"device": "cpu"}
