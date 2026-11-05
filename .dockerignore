@@ -1,0 +1,16 @@
+.git
+.venv
+.env
+__pycache__
+*.pyc
+.pytest_cache
+.streamlit/secrets.toml
+data
+vector_db
+logs
+downloades
+_backup
+tests
+*.zip
+*.md
+!README.md
