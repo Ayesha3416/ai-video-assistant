@@ -1,6 +1,6 @@
 import os
 
-from config import bootstrap, get_logger
+from config import bootstrap, get_logger, settings
 
 bootstrap()
 
@@ -10,8 +10,6 @@ from core.extractor import (
     extract_questions,
     classify_category,
 )
-from utils.audio_processor import process_input
-from core.transcriber import transcribe_all_with_segments
 from core.summarizer import summarize, generate_title
 from core.rag_engine import build_rag_chain, ask_question
 from core.pdf_reader import extract_pdf_text
@@ -20,6 +18,17 @@ log = get_logger(__name__)
 
 
 def run_pipeline(source: str, language: str = "english", on_progress=None) -> dict:
+    if not settings.enable_video:
+        raise RuntimeError(
+            "Video analysis is turned off in this deployment (ENABLE_VIDEO=false). "
+            "Please upload a PDF instead."
+        )
+
+    # Imported here, not at the top of the file, so a PDF-only deployment never
+    # has to install whisper / yt-dlp / pydub.
+    from utils.audio_processor import process_input
+    from core.transcriber import transcribe_all_with_segments
+
     def report(stage: str, message: str):
         log.info("[%s] %s", stage, message)
         if on_progress:

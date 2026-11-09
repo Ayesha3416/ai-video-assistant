@@ -577,7 +577,11 @@ def render_dashboard():
         )
 
         placeholder = (
-            "Paste a YouTube link, attach a PDF with 📎, or ask a question..."
+            (
+                "Paste a YouTube link, attach a PDF with 📎, or ask a question..."
+                if settings.enable_video
+                else "Attach a PDF with 📎, or ask a question..."
+            )
             if not result
             else "Ask a question about this video, or paste a new link to analyze..."
         )
@@ -651,7 +655,23 @@ def render_dashboard():
 
             # ---- User pasted a video URL or uploaded a PDF ----
             clean_source = message.strip().strip("\"'").strip()
-            if upload_bytes is not None or _looks_like_source(clean_source):
+            if (
+                not settings.enable_video
+                and upload_bytes is None
+                and clean_source.lower().startswith(("http://", "https://"))
+            ):
+                st.session_state.chat_history.append(
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Video links are turned off in this version of the app. "
+                            "Please attach a PDF with the 📎 button instead."
+                        ),
+                        "time": datetime.now().strftime("%I:%M %p"),
+                    }
+                )
+
+            elif upload_bytes is not None or _looks_like_source(clean_source):
 
                 # Pasting a new video link always starts a fresh conversation.
                 # The previous conversation is already saved in Recent — it's
@@ -718,8 +738,12 @@ def render_dashboard():
                     {
                         "role": "assistant",
                         "content": (
-                            "I don't have a video to talk about yet — "
-                            "paste a YouTube link or upload a PDF first."
+                            "I don't have a video or document to talk about yet — "
+                            + (
+                                "paste a YouTube link or upload a PDF first."
+                                if settings.enable_video
+                                else "attach a PDF first."
+                            )
                         ),
                         "time": datetime.now().strftime("%I:%M %p"),
                     }
